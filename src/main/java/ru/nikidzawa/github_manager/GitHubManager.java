@@ -15,7 +15,6 @@ public class GitHubManager {
     GHMyself myself;
     Set<Long> allPrIds = new HashSet<>();
     Set<String> allCmSHAs = new HashSet<>();
-    Set<String> allBrSHAs = new HashSet<>();
     HashMap <Long, Integer> repoStars = new HashMap<>();
     public GitHubManager() {
         try {
@@ -43,7 +42,7 @@ public class GitHubManager {
             HashSet<GHPullRequest> newPrs = new HashSet<>();
             boolean checkFirst = !allPrIds.isEmpty();
 
-            myself.getAllRepositories()
+            List<RepositoryDescription> repos = myself.getAllRepositories()
                     .values()
                     .stream()
                     .map(repository -> {
@@ -61,7 +60,7 @@ public class GitHubManager {
                                     newPrs.add(pr);
                                 }
                             });
-                            return new RepositoryDescription (
+                            return new RepositoryDescription(
                                     repository.getFullName(),
                                     repository,
                                     prs
@@ -69,8 +68,9 @@ public class GitHubManager {
                         } catch (IOException e) {
                             throw new RuntimeException(e);
                         }
-                    })
-                    .collect(Collectors.toList());
+                    }).toList();
+
+            gui.setMenu(myself.getName(), repos);
 
             if (checkFirst) {
                 newPrs.forEach(pr ->
@@ -142,12 +142,12 @@ public class GitHubManager {
                                 int previousStars = repoStars.get(id);
                                 if (currentStars > previousStars) {
                                     repoStars.put(id, currentStars);
-                                    gui.sendMessage("Лайк", "Новый лайк в репозитории"
-                                            + repository.getName());
+                                    gui.sendMessage(messages.getString("like"),
+                                            messages.getString("like_message") + repository.getName());
                                 } else if (currentStars < previousStars) {
                                     repoStars.put(id, currentStars);
-                                    gui.sendMessage("Дизлайк", "Потерян лайк в репозитории"
-                                            + repository.getName());
+                                    gui.sendMessage(messages.getString("dislike"),
+                                            messages.getString("dislike_message") + repository.getName());
                                 }
                             }
                         });
