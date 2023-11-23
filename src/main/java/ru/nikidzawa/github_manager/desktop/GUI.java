@@ -14,6 +14,7 @@ import java.util.ResourceBundle;
 public class GUI {
     private TrayIcon trayIcon;
     private ResourceBundle messages;
+    private Configuration configuration;
     public GUI() {
         SystemTray tray = SystemTray.getSystemTray();
         Image image = Toolkit.getDefaultToolkit().createImage(getClass().getResource("/logo.jpg"));
@@ -31,9 +32,10 @@ public class GUI {
 
 
     }
-    public void setMenu (String login, List<RepositoryDescription> repository) {
+    public void setMenu (String login, List<RepositoryDescription> repository, Configuration configuration) {
+        this.configuration = configuration;
         PopupMenu popupMenu = new PopupMenu();
-        messages = ResourceBundle.getBundle("messages", Configuration.selectedLocale);
+        messages = ResourceBundle.getBundle("messages", configuration.getSelectedLocale());
 
         MenuItem accountMI = new MenuItem(login);
         accountMI.addActionListener(e -> openInBrowser("https://github.com/" + login));
@@ -95,7 +97,7 @@ public class GUI {
         Menu LanguagesMI = new Menu(messages.getString("select_language"));
         CheckboxMenuItem russLang;
         CheckboxMenuItem engLang;
-        if (Configuration.selectedLocale.equals(new Locale("ru"))) {
+        if (configuration.getSelectedLocale().equals(new Locale("ru"))) {
             russLang = new CheckboxMenuItem("Russian", true);
             engLang = new CheckboxMenuItem("English", false);
         }
@@ -103,22 +105,22 @@ public class GUI {
             russLang = new CheckboxMenuItem("Russian", false);
             engLang = new CheckboxMenuItem("English", true);
         }
-        russLang.addItemListener(e -> Configuration.selectedLocale = new Locale("ru"));
-        engLang.addItemListener(e -> Configuration.selectedLocale = new Locale("en"));
+        russLang.addItemListener(e -> configuration.setSelectedLocale(new Locale("ru")));
+        engLang.addItemListener(e -> configuration.setSelectedLocale(new Locale("en")));
 
         Menu messagesConfMI = new Menu(messages.getString("messages_settings"));
 
         CheckboxMenuItem commitsConf = new CheckboxMenuItem(messages.getString("commits"),
-                Configuration.showCommits);
-        commitsConf.addItemListener(e -> Configuration.showCommits = !Configuration.showCommits);
+                configuration.isShowCommits());
+        commitsConf.addItemListener(e -> configuration.setShowCommits(!configuration.isShowCommits()));
 
         CheckboxMenuItem pullsConf = new CheckboxMenuItem(messages.getString("pull_requests"),
-                Configuration.showPullRequests);
-        pullsConf.addItemListener(e -> Configuration.showPullRequests = !Configuration.showPullRequests);
+                configuration.isShowPullRequests());
+        pullsConf.addItemListener(e -> configuration.setShowPullRequests(!configuration.isShowPullRequests()));
 
         CheckboxMenuItem starConf = new CheckboxMenuItem(messages.getString("stars"),
-                Configuration.showStars);
-        starConf.addItemListener(e -> Configuration.showStars = !Configuration.showStars);
+                configuration.isShowStars());
+        starConf.addItemListener(e -> configuration.setShowStars(!configuration.isShowStars()));
 
         messagesConfMI.add(commitsConf);
         messagesConfMI.add(pullsConf);

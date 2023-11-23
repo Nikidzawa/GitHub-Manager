@@ -18,5 +18,4 @@ public class UserEntity {
     @Id
     Long id;
     String token;
-    Locale language;
 }

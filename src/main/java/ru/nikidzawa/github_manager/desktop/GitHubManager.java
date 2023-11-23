@@ -3,6 +3,8 @@ package ru.nikidzawa.github_manager.desktop;
 import lombok.SneakyThrows;
 import org.kohsuke.github.*;
 
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import ru.nikidzawa.github_manager.telegram.service.TelegramBot;
 
 import java.util.*;
@@ -18,18 +20,23 @@ public class GitHubManager {
     private HashMap <Long, Integer> repoStars = new HashMap<>();
     private TelegramBot telegramBot;
     private Long userId;
+    private Timer timer;
+    private Configuration configuration;
+
     @SneakyThrows
     public GitHubManager() {
+        configuration = new Configuration();
         gitHub = new GitHubBuilder()
-                .withAppInstallationToken("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")
+                .withAppInstallationToken("Ваш токен")
                 .build();
         myself = gitHub.getMyself();
-         gui = new GUI();
+        gui = new GUI();
         init();
     }
 
-    public GitHubManager(Long id, String token, TelegramBot telegramBot) {
+    public GitHubManager(Long id, String token, Configuration configuration, TelegramBot telegramBot) {
         try {
+            this.configuration = configuration;
             this.telegramBot = telegramBot;
             userId = id;
             gitHub = new GitHubBuilder()
@@ -37,18 +44,29 @@ public class GitHubManager {
                     .build();
             myself = gitHub.getMyself();
         }catch (Exception ex) {
-            telegramBot.sendMessage(userId, "Неверный токен");
-            telegramBot.wait.add(id);
+            telegramBot.sendMessage(userId, "Неверный токен или сбой в работе GitHub Api");
             throw new RuntimeException();
         }
+        telegramBot.wait.remove(userId);
+        telegramBot.sendMessage(userId,
+                "Ответ получен, приложение начало свою работу!" +
+                        "\n /settings для индивидуальной настройки." +
+                        "\n Отзыв о пожеланиях и ошибках можете оставить у меня в личных сообщениях @Nikidzawa." +
+                        "\n Десктопную версию можете найти в моём GitHub https://github.com/Nikidzawa/GitHub-Manager." +
+                        "\n Приятного пользоавния!");
         init();
     }
+
+    // TODO: 24.11.2023 Помимо ссылок на репозитории, нужно добавить ссылки на коммиты/пуллы
+    // TODO: 24.11.2023 Добавить смайлики
+    // TODO: 24.11.2023 Сократить код, особенно ifы
     private void init() {
-        new Timer().schedule(new TimerTask() {
+        timer = new Timer();
+         timer.schedule(new TimerTask() {
             @Override
             public void run() {
                 try {
-                    messages = ResourceBundle.getBundle("messages", Configuration.selectedLocale);
+                    messages = ResourceBundle.getBundle("messages", configuration.getSelectedLocale());
                     HashSet<GHPullRequest> newPullRequests = new HashSet<>();
                     HashSet<GHCommit> newCommits = new HashSet<>();
                     boolean checkFirstPull = !allPullsIds.isEmpty();
@@ -64,23 +82,27 @@ public class GitHubManager {
                                 repoDisc.setCommits(checkCommits(repository, newCommits));
                                 return repoDisc;
                             }).toList();
-                    if (checkFirstPull && Configuration.showPullRequests) {
+                    if (checkFirstPull && configuration.isShowPullRequests()) {
                         newPullRequests.forEach(pr -> {
                             if (telegramBot != null) {
-                                telegramBot.sendMessage(userId, messages.getString("newPullRequestMessage") +
-                                        pr.getRepository().getName() + "\n" + pr.getTitle());
+                                InlineKeyboardMarkup markup = telegramBot.urlIneKeyBoardMarkupBuilder(
+                                        "Перейти в репозиторий", pr.getRepository().getHtmlUrl().toString());
+                                telegramBot.sendMessageInlineMarkup(userId, messages.getString("newPullRequestMessage") +
+                                        pr.getRepository().getName() + "\n" + pr.getTitle(), markup);
                             } else {
                                 gui.sendMessage(messages.getString("newPullRequestMessage") +
                                         pr.getRepository().getName(), pr.getTitle());
                             }
                         });
                     }
-                    if (checkFirstCommit && Configuration.showCommits) {
+                    if (checkFirstCommit && configuration.isShowCommits()) {
                         newCommits.forEach(cm -> {
                             try {
                                 if (telegramBot != null) {
-                                    telegramBot.sendMessage(userId, messages.getString("newCommitMessage") +
-                                            cm.getOwner().getName() + "\n" + cm.getCommitShortInfo().getMessage());
+                                    InlineKeyboardMarkup markup = telegramBot.urlIneKeyBoardMarkupBuilder(
+                                            "Перейти в репозиторий", cm.getOwner().getHtmlUrl().toString());
+                                    telegramBot.sendMessageInlineMarkup(userId, messages.getString("newCommitMessage") +
+                                            cm.getOwner().getName() + "\n" + cm.getCommitShortInfo().getMessage(), markup);
                                 } else {
                                     gui.sendMessage(messages.getString("newCommitMessage") +
                                             cm.getOwner().getName(), cm.getCommitShortInfo().getMessage());
@@ -90,20 +112,25 @@ public class GitHubManager {
                             }
                         });
                     }
-                    if (Configuration.showStars) {
+                    if (configuration.isShowStars()) {
                         checkStars();
                     }
                     if (telegramBot == null) {
-                        gui.setMenu(myself.getLogin(), repos);
+                        gui.setMenu(myself.getLogin(), repos, configuration);
                     }
                 }catch (Exception ex) {
-                    if (telegramBot != null) telegramBot.sendMessage(userId, messages.getString("exception"));
+                    if (telegramBot != null) telegramBot.sendMessage(userId, "Произошла ошибка, поробуйте снова или свяжитесь с @Nikidzawa");
                     throw new RuntimeException(ex);
                 }
 
             }
         }, 1000, 1000 );
     }
+    public void stopTimer() {
+        timer.cancel();
+        timer.purge();
+    }
+
     @SneakyThrows
     private List<GHPullRequest> checkPulls(GHRepository repository, HashSet<GHPullRequest> newPullRequests) {
         List<GHPullRequest> pullRequests = repository.queryPullRequests()
@@ -149,22 +176,30 @@ public class GitHubManager {
                             repoStars.put(id, currentStars);
                         } else {
                             int previousStars = repoStars.get(id);
+                            InlineKeyboardMarkup markup = telegramBot.urlIneKeyBoardMarkupBuilder(
+                                    "Перейти в репозиторий", repository.getHtmlUrl().toString());
                             if (currentStars > previousStars) {
                                 repoStars.put(id, currentStars);
                                 if (telegramBot != null) {
-                                    telegramBot.sendMessage(userId, messages.getString("like") + "\n"
-                                            + messages.getString("like_message") + repository.getName());
+                                    telegramBot.sendMessageInlineMarkup(userId, messages.getString("like")
+                                            + "\n"
+                                            + messages.getString("like_message") + repository.getName(), markup);
                                 }
                                 else gui.sendMessage(messages.getString("like"),
                                             messages.getString("like_message") + repository.getName());
 
-                            } else if (currentStars < previousStars) {
+                            }
+                            else if (currentStars < previousStars) {
                                 repoStars.put(id, currentStars);
-                                if (telegramBot != null)
-                                    telegramBot.sendMessage(userId, messages.getString("dislike") + "\n"
-                                            + messages.getString("dislike_message") + repository.getName());
-                                else gui.sendMessage(messages.getString("dislike"),
-                                        messages.getString("dislike_message") + repository.getName());
+                                if (telegramBot != null) {
+                                    telegramBot.sendMessageInlineMarkup(userId, messages.getString("dislike")
+                                            + "\n"
+                                            + messages.getString("dislike_message") + repository.getName(), markup);
+                                }
+                                else {
+                                    gui.sendMessage(messages.getString("dislike"),
+                                            messages.getString("dislike_message") + repository.getName());
+                                }
                             }
                         }
                     });

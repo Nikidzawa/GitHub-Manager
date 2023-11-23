@@ -1,10 +1,15 @@
 package ru.nikidzawa.github_manager.desktop;
 
+import lombok.Getter;
+import lombok.Setter;
+
 import java.util.Locale;
 
+@Getter
+@Setter
 public class Configuration {
-    public static boolean showCommits = true;
-    public static boolean showPullRequests = true;
-    public static boolean showStars = true;
-    public static Locale selectedLocale = new Locale("en");
+    private boolean showCommits = true;
+    private boolean showPullRequests = true;
+    private boolean showStars = true;
+    private Locale selectedLocale = new Locale("en");
 }
