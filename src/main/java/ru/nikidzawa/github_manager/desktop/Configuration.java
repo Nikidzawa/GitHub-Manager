@@ -1,4 +1,4 @@
-package ru.nikidzawa.github_manager;
+package ru.nikidzawa.github_manager.desktop;
 
 import java.util.Locale;
 

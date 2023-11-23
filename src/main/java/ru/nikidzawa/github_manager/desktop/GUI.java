@@ -1,9 +1,10 @@
-package ru.nikidzawa.github_manager;
+package ru.nikidzawa.github_manager.desktop;
 
 import java.awt.*;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -57,15 +58,18 @@ public class GUI {
             repoSM.add(commits);
 
             repos.getPullRequests().forEach(pr -> {
-                MenuItem prMi = new MenuItem(pr.getTitle());
-                prMi.addActionListener(e -> openInBrowser(pr.getHtmlUrl().toString()));
-                pullRequest.add(prMi);
+                try {
+                    MenuItem prMi = new MenuItem(pr.getTitle() + getDate(pr.getCreatedAt()));
+                    prMi.addActionListener(e -> openInBrowser(pr.getHtmlUrl().toString()));
+                    pullRequest.add(prMi);
+                }catch (IOException ex) {
+                    throw new RuntimeException();
+                }
             });
             repos.getCommits().forEach(ghCommit -> {
                 try {
-                    Date date = ghCommit.getCommitDate();
-                    MenuItem commitMenuItem = new MenuItem(ghCommit.getCommitShortInfo().getMessage() + "    " +
-                            date.getDay() + "." + date.getMonth());
+                    MenuItem commitMenuItem = new MenuItem(
+                            ghCommit.getCommitShortInfo().getMessage() + getDate(ghCommit.getCommitDate()));
                     commitMenuItem.addActionListener(e -> openInBrowser(ghCommit.getHtmlUrl().toString()));
                     commits.add(commitMenuItem);
                 } catch (IOException e) {
@@ -138,5 +142,9 @@ public class GUI {
     public void sendMessage (String title, String text) {
         trayIcon.displayMessage(title, text, TrayIcon.MessageType.INFO);
 
+    }
+    private String getDate (Date date) {
+        SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy");
+        return "   " + messages.getString("date") + dateFormat.format(date);
     }
 }
