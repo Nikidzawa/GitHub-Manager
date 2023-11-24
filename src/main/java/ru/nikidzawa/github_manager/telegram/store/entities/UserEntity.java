@@ -17,5 +17,5 @@ import java.util.Locale;
 public class UserEntity {
     @Id
     Long id;
-    String token;
+    byte[] token;
 }

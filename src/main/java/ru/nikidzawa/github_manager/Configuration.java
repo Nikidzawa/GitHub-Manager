@@ -1,4 +1,4 @@
-package ru.nikidzawa.github_manager.desktop;
+package ru.nikidzawa.github_manager;
 
 import lombok.Getter;
 import lombok.Setter;

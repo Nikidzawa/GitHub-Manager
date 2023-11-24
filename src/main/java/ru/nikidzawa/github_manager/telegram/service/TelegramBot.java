@@ -1,5 +1,6 @@
 package ru.nikidzawa.github_manager.telegram.service;
 
+import com.vdurmont.emoji.EmojiParser;
 import jakarta.transaction.Transactional;
 import lombok.SneakyThrows;
 import org.antlr.v4.runtime.misc.Pair;
@@ -14,11 +15,13 @@ import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeDefault;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardRemove;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-import ru.nikidzawa.github_manager.desktop.Configuration;
-import ru.nikidzawa.github_manager.desktop.GitHubManager;
+import ru.nikidzawa.github_manager.Configuration;
+import ru.nikidzawa.github_manager.GitHubManager;
+import ru.nikidzawa.github_manager.telegram.Crypto;
 import ru.nikidzawa.github_manager.telegram.config.BotConfiguration;
 import ru.nikidzawa.github_manager.telegram.store.entities.UserEntity;
 import ru.nikidzawa.github_manager.telegram.store.repositories.UserRepository;
@@ -35,7 +38,7 @@ public class TelegramBot extends TelegramLongPollingBot {
     public TelegramBot(BotConfiguration config) throws TelegramApiException {
         this.config = config;
         List<BotCommand> listOfCommands = new ArrayList<>();
-        listOfCommands.add(new BotCommand("/start", "Начать сессию"));
+        listOfCommands.add(new BotCommand("/start", "Начать новую сессию"));
         listOfCommands.add(new BotCommand("/settings", "Настройки бота"));
         this.execute(new SetMyCommands(listOfCommands, new BotCommandScopeDefault(), null));
     }
@@ -74,19 +77,20 @@ public class TelegramBot extends TelegramLongPollingBot {
             if (update.hasMessage() && update.getMessage().hasText()) {
                 String message = update.getMessage().getText();
                 if (wait.contains(userId)) {
-                    sendMessage(userId, "Токен был получен. Ожидание ответа от Github Api ");
+                    sendMessage(userId, "Токен был получен. Ожидание ответа от Github Api");
                     if (configuration == null) {
                         configuration = new Configuration();
                     }
-
+                    byte[] token;
                     if (message.equals("Использовать предыдущий токен")) {
-                        gitHubManager = new GitHubManager(userId, user.getToken(), configuration, this);
-                    }
-                    else {
-                        user.setToken(message);
+                        token = user.getToken();
+                    } else {
+                        token = Crypto.encryptData(message);
+                        user.setToken(token);
                         repository.save(user);
-                        gitHubManager = new GitHubManager(userId, message, configuration, this);
                     }
+
+                    gitHubManager = new GitHubManager(userId, token, configuration, this);
                 }
 
                 else {
@@ -101,21 +105,14 @@ public class TelegramBot extends TelegramLongPollingBot {
                                         token);
                                 break;
                             }
-                            sendMessageInlineMarkup(userId, "Я ваш персональный GitHub помощник, " +
+                            sendMessage(userId,"\uD83E\uDD16 Я ваш персональный GitHub помощник, " +
                                     "который будет уведомлять вас об изменениях в репозиториях\n" +
-                                    "Для продолженя, введите ваш GitHub токен", null);
+                                    "Для продолженя, введите ваш GitHub токен");
                             break;
                         case "/settings":
-                            List<InlineButtonInfo> settings = new ArrayList<>();
-                            settings.add(new InlineButtonInfo("Язык " + configuration.getSelectedLocale(), "LANGUAGE"));
-                            settings.add(new InlineButtonInfo("Коммиты " + configuration.isShowCommits(), "COMMITS"));
-                            settings.add(new InlineButtonInfo("Пулл реквесты " + configuration.isShowPullRequests(), "PULLS"));
-                            settings.add(new InlineButtonInfo("Звёзды " + configuration.isShowStars(), "STARS"));
-                            InlineKeyboardMarkup settingsMarkup = inlineKeyBoardMarkupBuilder(settings);
+                            InlineKeyboardMarkup settingsMarkup = inlineKeyBoardMarkupBuilder(settingsButtons(configuration));
                             sendMessageInlineMarkup(userId, "Настройки", settingsMarkup);
                             break;
-                        case "/info":
-
                     }
                 }
             }
@@ -123,7 +120,7 @@ public class TelegramBot extends TelegramLongPollingBot {
                 String callBackData = update.getCallbackQuery().getData();
                 long messageId = update.getCallbackQuery().getMessage().getMessageId();
                 switch (callBackData) {
-                    case "LANGUAGE":
+                    case "LANGUAGE" :
                         configuration.setSelectedLocale(configuration.getSelectedLocale().getLanguage().equals("ru") ?
                                 new Locale("en") : new Locale("ru"));
                         setSettings(configuration, userId, messageId);
@@ -139,6 +136,10 @@ public class TelegramBot extends TelegramLongPollingBot {
                     case "STARS" :
                         configuration.setShowStars(!configuration.isShowStars());
                         setSettings(configuration, userId, messageId);
+                        break;
+                    case "SETTINGS_ACCEPT" :
+                        gitHubManager = new GitHubManager(userId, user.getToken(), configuration, this);
+                        break;
                 }
             }
             gitHub.remove(userId);
@@ -146,21 +147,34 @@ public class TelegramBot extends TelegramLongPollingBot {
             gitHub.put(userId, pair);
     }
 
-    public InlineKeyboardMarkup inlineKeyBoardMarkupBuilder(List<InlineButtonInfo> buttonInfoList) {
-        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
-
-        for (InlineButtonInfo buttonInfo : buttonInfoList) {
-            InlineKeyboardButton button = new InlineKeyboardButton();
-            button.setText(buttonInfo.getText());
-            button.setCallbackData(buttonInfo.getCallbackData());
-
+    public InlineKeyboardMarkup inlineKeyBoardMarkupBuilder(List<List<InlineButtonInfo>> buttonInfoList) {
+        List<List<InlineKeyboardButton>> buttons = new ArrayList<>();
+        buttonInfoList.forEach(inlineButtonInfos -> {
             List<InlineKeyboardButton> rowInline = new ArrayList<>();
-            rowInline.add(button);
-            rowsInline.add(rowInline);
-        }
-        return new InlineKeyboardMarkup(rowsInline);
+            inlineButtonInfos.forEach(inlineButtonInfo -> {
+                InlineKeyboardButton button = new InlineKeyboardButton();
+                button.setText(inlineButtonInfo.getText());
+                button.setCallbackData(inlineButtonInfo.getCallbackData());
+
+                rowInline.add(button);
+            });
+            buttons.add(rowInline);
+        });
+        return new InlineKeyboardMarkup(buttons);
     }
-    public InlineKeyboardMarkup urlIneKeyBoardMarkupBuilder (String text, String url) {
+    public InlineKeyboardMarkup urlIneKeyBoardMarkupBuilder (List<Pair<String, String>> pairs) {
+        List<List<InlineKeyboardButton>> buttons = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        pairs.forEach(pair -> {
+            InlineKeyboardButton repositoryButton = new InlineKeyboardButton();
+            repositoryButton.setText(pair.a);
+            repositoryButton.setUrl(pair.b);
+            rowInline.add(repositoryButton);
+        });
+        buttons.add(rowInline);
+        return new InlineKeyboardMarkup(buttons);
+    }
+    public InlineKeyboardMarkup urlIneKeyBoardMarkupBuilder(String text, String url) {
         InlineKeyboardButton repositoryButton = new InlineKeyboardButton();
         repositoryButton.setText(text);
         repositoryButton.setUrl(url);
@@ -187,15 +201,34 @@ public class TelegramBot extends TelegramLongPollingBot {
         EditMessageText SETTINGS = new EditMessageText();
         SETTINGS.setChatId(userId);
         SETTINGS.setText("Настройки");
-        List<InlineButtonInfo> updatedSettings = new ArrayList<>();
-        updatedSettings.add(new InlineButtonInfo("Язык " + configuration.getSelectedLocale(), "LANGUAGE"));
-        updatedSettings.add(new InlineButtonInfo("Коммиты " + configuration.isShowCommits(), "COMMITS"));
-        updatedSettings.add(new InlineButtonInfo("Пулл реквесты " + configuration.isShowPullRequests(), "PULLS"));
-        updatedSettings.add(new InlineButtonInfo("Звёзды " + configuration.isShowStars(), "STARS"));
-        InlineKeyboardMarkup updatedSettingsMarkup = inlineKeyBoardMarkupBuilder(updatedSettings);
+        InlineKeyboardMarkup updatedSettingsMarkup = inlineKeyBoardMarkupBuilder(settingsButtons(configuration));
         SETTINGS.setReplyMarkup(updatedSettingsMarkup);
         SETTINGS.setMessageId((int) messageId);
         execute(SETTINGS);
+    }
+    private List<List<InlineButtonInfo>> settingsButtons (Configuration configuration) {
+        List<List<InlineButtonInfo>> settings = new ArrayList<>();
+        List<InlineButtonInfo> country = new ArrayList<>();
+        country.add(new InlineButtonInfo("Язык " + flag(configuration.getSelectedLocale()), "LANGUAGE"));
+
+        List<InlineButtonInfo> settingsButtons = new ArrayList<>();
+        settingsButtons.add(new InlineButtonInfo("Коммиты " + onOrOff(configuration.isShowCommits()), "COMMITS"));
+        settingsButtons.add(new InlineButtonInfo("Реквесты " + onOrOff(configuration.isShowPullRequests()), "PULLS"));
+        settingsButtons.add(new InlineButtonInfo("Звёзды " + onOrOff(configuration.isShowStars()), "STARS"));
+
+        List<InlineButtonInfo> accept = new ArrayList<>();
+        accept.add(new InlineButtonInfo("Применить настройки", "SETTINGS_ACCEPT"));
+
+        settings.add(country);
+        settings.add(settingsButtons);
+        settings.add(accept);
+        return settings;
+    }
+    private String onOrOff (boolean confInfo) {
+        return confInfo? "✅" : "❌";
+    }
+    private String flag (Locale locale) {
+        return locale.getLanguage().equals("ru") ? EmojiParser.parseToUnicode("\uD83C\uDDF7\uD83C\uDDFA") : EmojiParser.parseToUnicode("\uD83C\uDDEC\uD83C\uDDE7");
     }
 
     @SneakyThrows
@@ -219,6 +252,8 @@ public class TelegramBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(id);
         sendMessage.setText(message);
+        ReplyKeyboardRemove replyKeyboardRemove = new ReplyKeyboardRemove(true);
+        sendMessage.setReplyMarkup(replyKeyboardRemove);
         execute(sendMessage);
     }
 }
