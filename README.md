@@ -38,3 +38,5 @@
 ![screen_tg_bot_second.png](src%2Fmain%2Fresources%2Fscreen_tg_bot_second.png)
 
 ![screen_tg_bot_third.png](src%2Fmain%2Fresources%2Fscreen_tg_bot_third.png)
+
+Ссылка на бота: https://t.me/Git_Manager_bot
