@@ -1,15 +1,19 @@
 package ru.nikidzawa.github_manager.telegram.service;
 
-import com.vdurmont.emoji.EmojiParser;
 import jakarta.transaction.Transactional;
 import lombok.SneakyThrows;
 import org.antlr.v4.runtime.misc.Pair;
+import org.kohsuke.github.GHRepository;
+import org.kohsuke.github.GitHub;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageCaption;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
+import org.telegram.telegrambots.meta.api.objects.InputFile;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeDefault;
@@ -21,13 +25,14 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.Keyboard
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import ru.nikidzawa.github_manager.Configuration;
 import ru.nikidzawa.github_manager.GitHubManager;
-import ru.nikidzawa.github_manager.telegram.Crypto;
+import ru.nikidzawa.github_manager.RepositoryDescription;
 import ru.nikidzawa.github_manager.telegram.config.BotConfiguration;
 import ru.nikidzawa.github_manager.telegram.store.entities.UserEntity;
 import ru.nikidzawa.github_manager.telegram.store.repositories.UserRepository;
 
 import java.util.*;
 import java.util.List;
+import java.util.stream.Stream;
 
 @Component
 public class TelegramBot extends TelegramLongPollingBot {
@@ -38,8 +43,9 @@ public class TelegramBot extends TelegramLongPollingBot {
     public TelegramBot(BotConfiguration config) throws TelegramApiException {
         this.config = config;
         List<BotCommand> listOfCommands = new ArrayList<>();
-        listOfCommands.add(new BotCommand("/start", "Начать новую сессию"));
-        listOfCommands.add(new BotCommand("/settings", "Настройки бота"));
+        listOfCommands.add(new BotCommand("/start", "Обновить токен"));
+        listOfCommands.add(new BotCommand("/menu", "Главное меню"));
+        listOfCommands.add(new BotCommand("/info", "Небольшая информация"));
         this.execute(new SetMyCommands(listOfCommands, new BotCommandScopeDefault(), null));
     }
     @Override
@@ -51,7 +57,7 @@ public class TelegramBot extends TelegramLongPollingBot {
         return config.getToken();
     }
     public HashSet<Long> wait = new HashSet<>();
-    private HashMap<Long, Pair<GitHubManager, Configuration>> gitHub = new HashMap<>();
+    private HashMap<Long, GitHubData> gitHub = new HashMap<>();
     @SneakyThrows
     @Override
     @Transactional
@@ -59,9 +65,10 @@ public class TelegramBot extends TelegramLongPollingBot {
         Long userId = update.hasCallbackQuery() ?
                 update.getCallbackQuery().getMessage().getChatId() : update.getMessage().getChatId();
 
-        Pair<GitHubManager, Configuration> pair = gitHub.getOrDefault(userId, new Pair<>(null, null));
-        GitHubManager gitHubManager = pair.a;
-        Configuration configuration = pair.b;
+        GitHubData data = gitHub.getOrDefault(userId, new GitHubData());
+        GitHubManager gitHubManager = data.getGitHubManager();
+        Configuration configuration = data.getConfiguration();
+        GitHub userGitHub = data.getGitHub();
 
         UserEntity user = repository.findById(userId).orElseGet(() -> {
             UserEntity entity = new UserEntity();
@@ -69,82 +76,218 @@ public class TelegramBot extends TelegramLongPollingBot {
             repository.save(entity);
             return entity;
         });
-        if (gitHubManager != null) {
-            gitHub.remove(userId);
-            gitHubManager.stopTimer();
+
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            String message = update.getMessage().getText();
+            if (wait.contains(userId)) {
+                if (gitHubManager != null) {
+                    gitHubManager.stopSession();
+                }
+                sendMessage(userId, "Токен был получен. Ожидание ответа от GitHub Api");
+                byte[] token;
+                if (message.equals("Использовать предыдущий токен")) {
+                    token = user.getToken();
+                } else {
+                    token = Crypto.encryptData(message);
+                    user.setToken(token);
+                    repository.save(user);
+                }
+                gitHubManager = new GitHubManager(userId, token, configuration, this);
+                userGitHub = gitHubManager.getGitHub();
+                startMenu(userGitHub, gitHubManager, userId, configuration);
+            }
+            else {
+                switch (message) {
+                    case "/start":
+                        if (user.getToken() == null) {
+                            ReplyKeyboardMarkup start = keyBoardMarkupBuilder(List.of("Приступим!"));
+                            sendMessage(userId, "\uD83E\uDD16 Здравствуйте! Я ваш персональный GitHub помощник");
+                            sendMessageReplyKeyboardMarkup(userId,
+                                    """
+                                            вот мои функции \uD83D\uDCA1
+                                            
+                                            - Уведомлю вас об изменениях в репозиториях.
+                                            - Покажу краткую информацию о изменениях и предоставлю быстрый доступ ко всем необходимым ссылкам.
+                                            - Дам краткий отчет по репозиториям, прикреплю ссылки которые вам могут понадобится.
+                                            
+                                            Готовы начать?""", start);
+                            break;
+                        }
+                        wait.add(userId);
+                        List<String> getToken = List.of("Использовать предыдущий токен");
+                        ReplyKeyboardMarkup token = keyBoardMarkupBuilder(getToken);
+
+                        sendMessageReplyKeyboardMarkup(userId, "Укажите новый токен", token);
+                        break;
+                    case "Приступим!" :
+                        wait.add(userId);
+                        sendMessage(userId, "Для начала, мне нужно получить ваш GitHub токен");
+                        break;
+                    case "/menu" :
+                        if (user.getToken() != null) {
+                            startMenu(userGitHub, gitHubManager, userId, configuration);
+                            break;
+                        }
+                        sendMessage(userId, "Чтобы получить доступ к функциям приложения, я должен знать ваш токен. Для этого, введите /start и следуйте инструкции");
+                        break;
+                    case "/info":
+                        sendMessage(userId,
+                                """
+                                        \uD83D\uDD04 /start обновить токен
+
+                                        \uD83C\uDFE0 /menu перейти в главное меню
+
+                                        \uD83D\uDCAC Отзыв можете оставить [у меня](https://t.me/Nikidzawa) в личных сообщениях
+
+                                        \uD83C\uDF10 Десктопную версию можете найти в моём [GitHub](https://github.com/Nikidzawa/GitHub-Manager)
+
+                                        Приятного пользоавния! ✨""");
+                        break;
+                }
+            }
+        } else if (update.hasCallbackQuery()) {
+            String callBackData = update.getCallbackQuery().getData();
+            long messageId = update.getCallbackQuery().getMessage().getMessageId();
+            switch (callBackData) {
+                case "MENU":
+                    startMenu(userGitHub, gitHubManager, userId, configuration);
+                    break;
+                case "LANGUAGE":
+                    configuration.setSelectedLocale(configuration.getSelectedLocale().getLanguage().equals("ru") ?
+                            new Locale("en") : new Locale("ru"));
+                    setSettings(configuration, userId, messageId);
+                    break;
+                case "COMMITS":
+                    configuration.setShowCommits(!configuration.isShowCommits());
+                    setSettings(configuration, userId, messageId);
+                    break;
+                case "PULLS":
+                    configuration.setShowPullRequests(!configuration.isShowPullRequests());
+                    setSettings(configuration, userId, messageId);
+                    break;
+                case "STARS":
+                    configuration.setShowStars(!configuration.isShowStars());
+                    setSettings(configuration, userId, messageId);
+                    break;
+                case "CHANGE_SESSION_STATUS":
+                    if (gitHubManager.sessionIsActive()) {
+                        gitHubManager.stopSession();
+                    }
+                    else {
+                        gitHubManager.startSession();
+                    }
+                    changeMenu(userId, messageId, userGitHub, gitHubManager, configuration);
+                    break;
+                case "SETTINGS_ACCEPT" :
+                    gitHubManager.startSession();
+                    startMenu(userGitHub, gitHubManager, userId, configuration);
+                    break;
+                case "SETTINGS" :
+                    gitHubManager.stopSession();
+                    sendMessageInlineMarkup(userId, "Настройки", inlineKeyBoardMarkupBuilder(settingsButtons(configuration)));
+                    break;
+                case "CHANGE_SHOWING_REPOS" :
+                    configuration.setShowRepos(!configuration.isShowRepos());
+                    changeMenu(userId, messageId, userGitHub, gitHubManager, configuration);
+            }
+        }
+        gitHub.remove(userId);
+        gitHub.put(userId, new GitHubData(configuration, userGitHub, gitHubManager));
+    }
+    @SneakyThrows
+    private void changeMenu(Long userId, long messageID, GitHub userGitHub, GitHubManager gitHubManager, Configuration configuration) {
+        EditMessageCaption messageCaption = new EditMessageCaption();
+        messageCaption.setChatId(userId);
+        messageCaption.setChatId(userId);
+        messageCaption.setMessageId((int) messageID);
+        messageCaption.setParseMode("Markdown");
+        messageCaption.setCaption(menuCaption(gitHubManager, userGitHub, configuration));
+        messageCaption.setReplyMarkup(menuButtons(userGitHub, gitHubManager, configuration));
+
+        execute(messageCaption);
+    }
+    @SneakyThrows
+    private void startMenu (GitHub userGitHub, GitHubManager gitHubManager, Long userId, Configuration configuration) {
+        String photoUrl = userGitHub.getMyself().getAvatarUrl();
+        SendPhoto sendPhoto = new SendPhoto();
+        sendPhoto.setChatId(userId);
+        sendPhoto.setCaption(menuCaption(gitHubManager, userGitHub, null));
+        sendPhoto.setReplyMarkup(menuButtons(userGitHub, gitHubManager, configuration));
+        sendPhoto.setPhoto(new InputFile(photoUrl));
+        execute(sendPhoto);
+    }
+    @SneakyThrows
+    private InlineKeyboardMarkup menuButtons (GitHub userGitHub, GitHubManager gitHubManager, Configuration configuration) {
+        List<List<InlineKeyboardButton>> rowInline = new ArrayList<>();
+
+        List<InlineKeyboardButton> accountRow = new ArrayList<>();
+        InlineKeyboardButton account = new InlineKeyboardButton();
+        account.setText(userGitHub.getMyself().getName());
+        account.setUrl(userGitHub.getMyself().getHtmlUrl().toString());
+
+        accountRow.add(account);
+
+        List<InlineKeyboardButton> session = new ArrayList<>();
+        InlineKeyboardButton sessionButton = new InlineKeyboardButton();
+        sessionButton.setText(getSessionStatusButton(gitHubManager.sessionIsActive()));
+        sessionButton.setCallbackData("CHANGE_SESSION_STATUS");
+        session.add(sessionButton);
+
+        List<InlineKeyboardButton> notifications = new ArrayList<>();
+        InlineKeyboardButton notificationsButton = new InlineKeyboardButton();
+        notificationsButton.setText("Все уведомления");
+        notificationsButton.setUrl("https://github.com/notifications");
+        notifications.add(notificationsButton);
+
+        List<InlineKeyboardButton> repos = new ArrayList<>();
+        InlineKeyboardButton reposButton = new InlineKeyboardButton();
+        reposButton.setText(showRepos(configuration.isShowRepos()));
+        reposButton.setCallbackData("CHANGE_SHOWING_REPOS");
+        repos.add(reposButton);
+
+        List<InlineKeyboardButton> settings = new ArrayList<>();
+        InlineKeyboardButton settingsButton = new InlineKeyboardButton();
+        settingsButton.setText("Настройки");
+        settingsButton.setCallbackData("SETTINGS");
+        settings.add(settingsButton);
+
+        rowInline.add(accountRow);
+        rowInline.add(notifications);
+        rowInline.add(repos);
+        rowInline.add(session);
+        rowInline.add(settings);
+
+        return new InlineKeyboardMarkup(rowInline);
+    }
+    @SneakyThrows
+    private String menuCaption (GitHubManager gitHubManager, GitHub userGitHub, Configuration configuration) {
+        String menu =
+                "Главное меню" +
+                "\n\nАккаунт: " + userGitHub.getMyself().getName() +
+                "\nСтатус сессии: " + getSessionStatus(gitHubManager.sessionIsActive());
+        return configuration == null ? menu : menu + "\n\n" + getReposInfo(gitHubManager);
+
+    }
+    private String getReposInfo(GitHubManager gitHubManager) {
+        StringBuilder stringBuilder = new StringBuilder();
+        for (RepositoryDescription repos : gitHubManager.getRepos()) {
+            stringBuilder.append("\uD83D\uDCD9 [").append(repos.getName()).append("](").append(repos.getGhRepository().getHtmlUrl()).append(")\n")
+                    .append("⭐ ").append(repos.getStarsCount()).append("\n")
+                    .append("[Коммиты:](https://github.com/").append(repos.getGhRepository().getFullName()).append("/commits/main) ").append(repos.getCommits().size()).append("\n")
+                    .append("[Пулл Реквесты:](https://github.com/").append(repos.getGhRepository().getFullName()).append("/pulls) ").append(repos.getPullRequests().size()).append("\n\n");
         }
 
-            if (update.hasMessage() && update.getMessage().hasText()) {
-                String message = update.getMessage().getText();
-                if (wait.contains(userId)) {
-                    sendMessage(userId, "Токен был получен. Ожидание ответа от Github Api");
-                    if (configuration == null) {
-                        configuration = new Configuration();
-                    }
-                    byte[] token;
-                    if (message.equals("Использовать предыдущий токен")) {
-                        token = user.getToken();
-                    } else {
-                        token = Crypto.encryptData(message);
-                        user.setToken(token);
-                        repository.save(user);
-                    }
+        return stringBuilder.toString();
+    }
 
-                    gitHubManager = new GitHubManager(userId, token, configuration, this);
-                }
-
-                else {
-                    switch (message) {
-                        case "/start":
-                            wait.add(userId);
-                            if (user.getToken() != null) {
-                                List<String> getToken = List.of("Использовать предыдущий токен");
-                                ReplyKeyboardMarkup token = keyBoardMarkupBuilder(getToken);
-                                sendMessageReplyKeyboardMarkup(userId,
-                                        "Ваша сессия завершена. Для открытия новой сессии, вам необходимо указать токен",
-                                        token);
-                                break;
-                            }
-                            sendMessage(userId,"\uD83E\uDD16 Я ваш персональный GitHub помощник, " +
-                                    "который будет уведомлять вас об изменениях в репозиториях\n" +
-                                    "Для продолженя, введите ваш GitHub токен");
-                            break;
-                        case "/settings":
-                            InlineKeyboardMarkup settingsMarkup = inlineKeyBoardMarkupBuilder(settingsButtons(configuration));
-                            sendMessageInlineMarkup(userId, "Настройки", settingsMarkup);
-                            break;
-                    }
-                }
-            }
-            else if (update.hasCallbackQuery()) {
-                String callBackData = update.getCallbackQuery().getData();
-                long messageId = update.getCallbackQuery().getMessage().getMessageId();
-                switch (callBackData) {
-                    case "LANGUAGE" :
-                        configuration.setSelectedLocale(configuration.getSelectedLocale().getLanguage().equals("ru") ?
-                                new Locale("en") : new Locale("ru"));
-                        setSettings(configuration, userId, messageId);
-                        break;
-                    case "COMMITS":
-                        configuration.setShowCommits(!configuration.isShowCommits());
-                        setSettings(configuration, userId, messageId);
-                        break;
-                    case "PULLS":
-                        configuration.setShowPullRequests(!configuration.isShowPullRequests());
-                        setSettings(configuration, userId, messageId);
-                        break;
-                    case "STARS" :
-                        configuration.setShowStars(!configuration.isShowStars());
-                        setSettings(configuration, userId, messageId);
-                        break;
-                    case "SETTINGS_ACCEPT" :
-                        gitHubManager = new GitHubManager(userId, user.getToken(), configuration, this);
-                        break;
-                }
-            }
-            gitHub.remove(userId);
-            pair = new Pair<>(gitHubManager, configuration);
-            gitHub.put(userId, pair);
+    private String showRepos (boolean status) {
+        return status ? "Скрыть репозитории" : "Показать репозитории";
+    }
+    private String getSessionStatusButton (boolean sessionIsActive) {
+        return sessionIsActive ? "Остановить сессию" : "Запустить сессию";
+    }
+    private String getSessionStatus(boolean sessionIsActive) {
+        return sessionIsActive ? "\uD83D\uDFE2 Сессия запущена" : "\uD83D\uDD34 Сессия остановлена";
     }
 
     public InlineKeyboardMarkup inlineKeyBoardMarkupBuilder(List<List<InlineButtonInfo>> buttonInfoList) {
@@ -225,10 +368,10 @@ public class TelegramBot extends TelegramLongPollingBot {
         return settings;
     }
     private String onOrOff (boolean confInfo) {
-        return confInfo? "✅" : "❌";
+        return confInfo ? "✅" : "❌";
     }
     private String flag (Locale locale) {
-        return locale.getLanguage().equals("ru") ? EmojiParser.parseToUnicode("\uD83C\uDDF7\uD83C\uDDFA") : EmojiParser.parseToUnicode("\uD83C\uDDEC\uD83C\uDDE7");
+        return locale.getLanguage().equals("ru") ? "\uD83C\uDDF7\uD83C\uDDFA" : "\uD83C\uDDEC\uD83C\uDDE7";
     }
 
     @SneakyThrows
@@ -251,6 +394,7 @@ public class TelegramBot extends TelegramLongPollingBot {
     public void sendMessage (Long id, String message) {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(id);
+        sendMessage.setParseMode("Markdown");
         sendMessage.setText(message);
         ReplyKeyboardRemove replyKeyboardRemove = new ReplyKeyboardRemove(true);
         sendMessage.setReplyMarkup(replyKeyboardRemove);

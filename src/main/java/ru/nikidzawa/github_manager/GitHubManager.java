@@ -1,32 +1,38 @@
 package ru.nikidzawa.github_manager;
 
-import com.vdurmont.emoji.EmojiParser;
+import lombok.Getter;
 import lombok.SneakyThrows;
 import org.antlr.v4.runtime.misc.Pair;
 import org.kohsuke.github.*;
 
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import ru.nikidzawa.github_manager.desktop.gui.GUI;
-import ru.nikidzawa.github_manager.desktop.gui.RepositoryDescription;
-import ru.nikidzawa.github_manager.telegram.Crypto;
+import ru.nikidzawa.github_manager.telegram.service.Crypto;
 import ru.nikidzawa.github_manager.telegram.service.TelegramBot;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class GitHubManager {
-    private GitHub gitHub;
     private ResourceBundle messages;
     private GHMyself myself;
     private Set<Long> allPullsIds = new HashSet<>();
     private Set<String> allCommitsSHAs = new HashSet<>();
     private HashMap <Long, Integer> repoStars = new HashMap<>();
     private Timer timer;
+    @Getter
+    private GitHub gitHub;
     private Configuration configuration;
+    @Getter
+    private List<RepositoryDescription> repos;
+    TimerTask timerTask;
+    TelegramBot telegramBot;
+    Long userId;
+    private boolean isActive;
 
     @SneakyThrows
     public GitHubManager() {
-        gitHub = new GitHubBuilder()
+        GitHub gitHub = new GitHubBuilder()
                 .withAppInstallationToken("Ваш токен")
                 .build();
         myself = gitHub.getMyself();
@@ -35,25 +41,23 @@ public class GitHubManager {
         startDesktopSession(gui);
     }
 
+    @SneakyThrows
     public GitHubManager(Long userId, byte[] token, Configuration configuration, TelegramBot telegramBot) {
+        this.configuration = configuration;
+        this.telegramBot = telegramBot;
+        this.userId = userId;
         try {
-            this.configuration = configuration;
             gitHub = new GitHubBuilder()
-                    .withAppInstallationToken(Crypto.decryptData(token))
-                    .build();
+                        .withAppInstallationToken(Crypto.decryptData(token))
+                        .build();
             myself = gitHub.getMyself();
-        }catch (Exception ex) {
+        } catch (Exception e ) {
             telegramBot.sendMessage(userId, "Неверный токен ❌");
-            throw new RuntimeException();
+            throw new RuntimeException(e);
         }
+        isActive = true;
         telegramBot.wait.remove(userId);
-        telegramBot.sendMessage(userId, "Сессия запущена " + EmojiParser.parseToUnicode(":white_check_mark:"));
-        telegramBot.sendMessage(userId,
-                "\n\n⚙ /settings для настройки" +
-                        "\n\n\uD83D\uDCAC Отзыв можете оставить у меня в личных сообщениях @Nikidzawa" +
-                        "\n\n\uD83C\uDF10 Десктопную версию можете найти в моём GitHub" + "\nhttps://github.com/Nikidzawa/GitHub-Manager." +
-                        "\n\nПриятного пользоавния! ✨");
-        startTelegramSession(telegramBot, userId);
+        startTelegramSession();
     }
     private void startDesktopSession(GUI gui) {
         timer = new Timer();
@@ -110,9 +114,9 @@ public class GitHubManager {
         }, 1000, 1000 );
     }
 
-    private void startTelegramSession(TelegramBot telegramBot, Long userId) {
+    private void startTelegramSession() {
         timer = new Timer();
-        timer.schedule(new TimerTask() {
+        timer.schedule(timerTask = new TimerTask() {
             @Override
             public void run() {
                 try {
@@ -122,12 +126,17 @@ public class GitHubManager {
                     boolean checkFirstPull = !allPullsIds.isEmpty();
                     boolean checkFirstCommit = !allCommitsSHAs.isEmpty();
 
-                    myself.getAllRepositories()
+                     repos = myself.getAllRepositories()
                             .values()
-                            .forEach(repository -> {
-                                checkPulls(repository, newPullRequests);
-                                checkCommits(repository, newCommits);
-                            });
+                            .stream()
+                            .map(repository -> {
+                                RepositoryDescription repoDisc = new RepositoryDescription(
+                                        repository.getName(), repository);
+                                repoDisc.setPullRequests(checkPulls(repository, newPullRequests));
+                                repoDisc.setCommits(checkCommits(repository, newCommits));
+                                repoDisc.setStarsCount(repository.getStargazersCount());
+                                return repoDisc;
+                            }).toList();
 
                     if (checkFirstPull && configuration.isShowPullRequests()) {
                         newPullRequests.forEach(pr -> {
@@ -176,13 +185,21 @@ public class GitHubManager {
                     telegramBot.sendMessage(userId, "Произошла ошибка, поробуйте снова или свяжитесь с @Nikidzawa");
                     throw new RuntimeException(ex);
                 }
-
             }
-        }, 1000, 1000 );
+        }, 10000, 10000 );
     }
-    public void stopTimer() {
+
+    public void stopSession() {
+        isActive = false;
         timer.cancel();
         timer.purge();
+    }
+    public void startSession() {
+        isActive = true;
+        startTelegramSession();
+    }
+    public boolean sessionIsActive() {
+        return isActive;
     }
 
     @SneakyThrows

@@ -1,4 +1,4 @@
-package ru.nikidzawa.github_manager.telegram;
+package ru.nikidzawa.github_manager.telegram.service;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;

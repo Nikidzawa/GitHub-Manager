@@ -1,6 +1,7 @@
 package ru.nikidzawa.github_manager.desktop.gui;
 
 import ru.nikidzawa.github_manager.Configuration;
+import ru.nikidzawa.github_manager.RepositoryDescription;
 
 import java.awt.*;
 import java.io.IOException;

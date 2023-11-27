@@ -11,5 +11,6 @@ public class Configuration {
     private boolean showCommits = true;
     private boolean showPullRequests = true;
     private boolean showStars = true;
+    private boolean showRepos = false;
     private Locale selectedLocale = new Locale("en");
 }
