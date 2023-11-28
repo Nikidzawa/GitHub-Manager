@@ -12,5 +12,6 @@ public class Configuration {
     private boolean showPullRequests = true;
     private boolean showStars = true;
     private boolean showRepos = false;
+    private int expirationTime = 0;
     private Locale selectedLocale = new Locale("en");
 }

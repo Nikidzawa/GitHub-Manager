@@ -3,7 +3,6 @@ package ru.nikidzawa.github_manager.telegram.service;
 import jakarta.transaction.Transactional;
 import lombok.SneakyThrows;
 import org.antlr.v4.runtime.misc.Pair;
-import org.kohsuke.github.GHRepository;
 import org.kohsuke.github.GitHub;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -11,9 +10,11 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageCaption;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.InputFile;
+import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeDefault;
@@ -32,7 +33,6 @@ import ru.nikidzawa.github_manager.telegram.store.repositories.UserRepository;
 
 import java.util.*;
 import java.util.List;
-import java.util.stream.Stream;
 
 @Component
 public class TelegramBot extends TelegramLongPollingBot {
@@ -57,6 +57,7 @@ public class TelegramBot extends TelegramLongPollingBot {
         return config.getToken();
     }
     public HashSet<Long> wait = new HashSet<>();
+    public HashSet<Long> wait2 = new HashSet<>();
     private HashMap<Long, GitHubData> gitHub = new HashMap<>();
     @SneakyThrows
     @Override
@@ -95,6 +96,22 @@ public class TelegramBot extends TelegramLongPollingBot {
                 gitHubManager = new GitHubManager(userId, token, configuration, this);
                 userGitHub = gitHubManager.getGitHub();
                 startMenu(userGitHub, gitHubManager, userId, configuration);
+            } else if (wait2.contains(userId)) {
+                int time = 0;
+                try {
+                    time = Integer.parseInt(message);
+                } catch (RuntimeException ex) {
+                    sendMessage(userId, "Необходимо указать просто число, без букв");
+                }
+                if (Integer.parseInt(message) <= 86400) {
+                    wait2.remove(userId);
+                    configuration.setExpirationTime(time);
+                    gitHubManager.startSession();
+                    startMenu(userGitHub, gitHubManager, userId, configuration);
+                }
+                else {
+                    sendMessage(userId, "Время должно быть меньше 86400");
+                }
             }
             else {
                 switch (message) {
@@ -189,6 +206,10 @@ public class TelegramBot extends TelegramLongPollingBot {
                 case "CHANGE_SHOWING_REPOS" :
                     configuration.setShowRepos(!configuration.isShowRepos());
                     changeMenu(userId, messageId, userGitHub, gitHubManager, configuration);
+                    break;
+                case "EXPIRATION_NOTIFICATION" :
+                    sendMessage(userId, "Введите продолжительность жизни уведомлений в секундах, но не более 86400 (сутки)");
+                    wait2.add(userId);
             }
         }
         gitHub.remove(userId);
@@ -201,17 +222,22 @@ public class TelegramBot extends TelegramLongPollingBot {
         messageCaption.setChatId(userId);
         messageCaption.setMessageId((int) messageID);
         messageCaption.setParseMode("Markdown");
-        messageCaption.setCaption(menuCaption(gitHubManager, userGitHub, configuration));
+        if (configuration.isShowRepos()) {
+            messageCaption.setCaption(menuCaptionAndRepos(gitHubManager, userGitHub));
+        } else {
+            messageCaption.setCaption(menuCaption(gitHubManager, userGitHub));
+        }
         messageCaption.setReplyMarkup(menuButtons(userGitHub, gitHubManager, configuration));
 
         execute(messageCaption);
     }
+
     @SneakyThrows
     private void startMenu (GitHub userGitHub, GitHubManager gitHubManager, Long userId, Configuration configuration) {
         String photoUrl = userGitHub.getMyself().getAvatarUrl();
         SendPhoto sendPhoto = new SendPhoto();
         sendPhoto.setChatId(userId);
-        sendPhoto.setCaption(menuCaption(gitHubManager, userGitHub, null));
+        sendPhoto.setCaption(menuCaption(gitHubManager, userGitHub));
         sendPhoto.setReplyMarkup(menuButtons(userGitHub, gitHubManager, configuration));
         sendPhoto.setPhoto(new InputFile(photoUrl));
         execute(sendPhoto);
@@ -260,13 +286,16 @@ public class TelegramBot extends TelegramLongPollingBot {
         return new InlineKeyboardMarkup(rowInline);
     }
     @SneakyThrows
-    private String menuCaption (GitHubManager gitHubManager, GitHub userGitHub, Configuration configuration) {
-        String menu =
-                "Главное меню" +
+    private String menuCaption (GitHubManager gitHubManager, GitHub userGitHub) {
+        return  "Главное меню" +
                 "\n\nАккаунт: " + userGitHub.getMyself().getName() +
                 "\nСтатус сессии: " + getSessionStatus(gitHubManager.sessionIsActive());
-        return configuration == null ? menu : menu + "\n\n" + getReposInfo(gitHubManager);
-
+    }
+    @SneakyThrows
+    private String menuCaptionAndRepos (GitHubManager gitHubManager, GitHub userGitHub) {
+            return "Главное меню" +
+                    "\n\nАккаунт: " + userGitHub.getMyself().getName() +
+                    "\nСтатус сессии: " + getSessionStatus(gitHubManager.sessionIsActive()) + "\n\n" + getReposInfo(gitHubManager);
     }
     private String getReposInfo(GitHubManager gitHubManager) {
         StringBuilder stringBuilder = new StringBuilder();
@@ -359,13 +388,20 @@ public class TelegramBot extends TelegramLongPollingBot {
         settingsButtons.add(new InlineButtonInfo("Реквесты " + onOrOff(configuration.isShowPullRequests()), "PULLS"));
         settingsButtons.add(new InlineButtonInfo("Звёзды " + onOrOff(configuration.isShowStars()), "STARS"));
 
+        List<InlineButtonInfo> expirationTimer = new ArrayList<>();
+        expirationTimer.add(new InlineButtonInfo(getExpirationTimerText(configuration), "EXPIRATION_NOTIFICATION"));
+
         List<InlineButtonInfo> accept = new ArrayList<>();
         accept.add(new InlineButtonInfo("Применить настройки", "SETTINGS_ACCEPT"));
 
         settings.add(country);
         settings.add(settingsButtons);
+        settings.add(expirationTimer);
         settings.add(accept);
         return settings;
+    }
+    private String getExpirationTimerText (Configuration configuration) {
+        return configuration.getExpirationTime() == 0? "Время удаление не задано" : "Время удаления составлят " + configuration.getExpirationTime() + " сек.";
     }
     private String onOrOff (boolean confInfo) {
         return confInfo ? "✅" : "❌";
@@ -375,10 +411,35 @@ public class TelegramBot extends TelegramLongPollingBot {
     }
 
     @SneakyThrows
-    public void sendMessageInlineMarkup(Long id, String message, InlineKeyboardMarkup markup) {
+    public void sendMessageInlineMarkupAndDelete(Long userId, String message, InlineKeyboardMarkup markup, int seconds) {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setReplyMarkup(markup);
-        sendMessage.setChatId(id);
+        sendMessage.setChatId(userId);
+        sendMessage.setText(message);
+        Message mes = execute(sendMessage);
+        if (seconds == 0) {
+            return;
+        }
+        Timer timer = new Timer();
+        timer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                DeleteMessage deleteMessage = new DeleteMessage();
+                deleteMessage.setChatId(userId);
+                deleteMessage.setMessageId(mes.getMessageId());
+                try {
+                    execute(deleteMessage);
+                } catch (TelegramApiException e) {
+                    sendMessage(userId, "Не удалось удалить уведомление");
+                }
+            }
+        }, seconds * 1000L);
+    }
+    @SneakyThrows
+    public void sendMessageInlineMarkup(Long userId, String message, InlineKeyboardMarkup markup) {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.setReplyMarkup(markup);
+        sendMessage.setChatId(userId);
         sendMessage.setText(message);
         execute(sendMessage);
     }

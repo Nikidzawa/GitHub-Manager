@@ -2,12 +2,9 @@ package ru.nikidzawa.github_manager.telegram.service;
 
 import lombok.*;
 import lombok.experimental.FieldDefaults;
-import org.kohsuke.github.GHRepository;
 import org.kohsuke.github.GitHub;
 import ru.nikidzawa.github_manager.Configuration;
 import ru.nikidzawa.github_manager.GitHubManager;
-
-import java.util.List;
 
 @Getter
 @Setter
@@ -16,7 +13,7 @@ public class GitHubData {
     Configuration configuration;
     GitHub gitHub;
     GitHubManager gitHubManager;
-    List<GHRepository> bannedRepos;
+    int expirationTime;
     public GitHubData () {
         this.configuration = new Configuration();
     }
