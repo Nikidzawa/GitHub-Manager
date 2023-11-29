@@ -44,6 +44,7 @@ public class GitHubManager {
 
     @SneakyThrows
     public GitHubManager(Long userId, byte[] token, Configuration configuration, TelegramBot telegramBot) {
+        messages = ResourceBundle.getBundle("messages", configuration.getSelectedLocale());
         this.configuration = configuration;
         this.telegramBot = telegramBot;
         this.userId = userId;
@@ -53,7 +54,7 @@ public class GitHubManager {
                         .build();
             myself = gitHub.getMyself();
         } catch (Exception e ) {
-            telegramBot.sendMessage(userId, "Неверный токен ❌");
+            telegramBot.sendMessage(userId, messages.getString("token_ex"));
             throw new RuntimeException(e);
         }
         isActive = true;
@@ -141,27 +142,27 @@ public class GitHubManager {
 
                     if (checkFirstPull && configuration.isShowPullRequests()) {
                         newPullRequests.forEach(pr -> {
-                            Pair<String, String> repo = new Pair<>("Репозиторий \uD83D\uDE80", pr.getRepository().getHtmlUrl().toString());
-                            Pair<String, String> pull = new Pair<>("Открыть реквест \uD83D\uDE80", pr.getHtmlUrl().toString());
+                            Pair<String, String> repo = new Pair<>(messages.getString("repo"), pr.getRepository().getHtmlUrl().toString());
+                            Pair<String, String> pull = new Pair<>(messages.getString("show_pull"), pr.getHtmlUrl().toString());
                             List<Pair<String, String>> list = new ArrayList<>();
                             list.add(repo);
                             list.add(pull);
                                 InlineKeyboardMarkup markup = telegramBot.urlIneKeyBoardMarkupBuilder(list);
-                                telegramBot.sendMessageInlineMarkupAndDelete(userId,"⚓ " + messages.getString("newPullRequestMessage") +
-                                        pr.getRepository().getName() + "\nОписание: " + pr.getTitle(), markup, configuration.getExpirationTime());
+                                telegramBot.sendMessageInlineMarkupAndDelete(userId,messages.getString("newPullRequestMessage") +
+                                        pr.getRepository().getName() + messages.getString("description") + pr.getTitle(), markup, configuration.getExpirationTime());
                         });
                     }
                     if (checkFirstCommit && configuration.isShowCommits()) {
                         newCommits.forEach(cm -> {
                             try {
-                                Pair<String, String> repo = new Pair<>("Репозиторий \uD83D\uDE80", cm.getOwner().getHtmlUrl().toString());
-                                Pair<String, String> commit = new Pair<>("Посмотреть коммит \uD83D\uDE80", cm.getHtmlUrl().toString());
+                                Pair<String, String> repo = new Pair<>(messages.getString("repo"), cm.getOwner().getHtmlUrl().toString());
+                                Pair<String, String> commit = new Pair<>(messages.getString("show_commit"), cm.getHtmlUrl().toString());
                                 List<Pair<String, String>> list = new ArrayList<>();
                                 list.add(repo);
                                 list.add(commit);
                                     InlineKeyboardMarkup markup = telegramBot.urlIneKeyBoardMarkupBuilder(list);
-                                    telegramBot.sendMessageInlineMarkupAndDelete(userId,"⚡ " + messages.getString("newCommitMessage") +
-                                            cm.getOwner().getName() + "\nОписание: " + cm.getCommitShortInfo().getMessage(), markup, configuration.getExpirationTime());
+                                    telegramBot.sendMessageInlineMarkupAndDelete(userId,messages.getString("newCommitMessage") +
+                                            cm.getOwner().getName() + messages.getString("description") + cm.getCommitShortInfo().getMessage(), markup, configuration.getExpirationTime());
                             } catch (Exception ex) {
                                 throw new RuntimeException(ex);
                             }
@@ -171,19 +172,19 @@ public class GitHubManager {
                         Pair<List<GHRepository>, List<GHRepository>> stars = checkStars();
                         stars.a.forEach(repository -> {
                             InlineKeyboardMarkup markup = telegramBot.urlIneKeyBoardMarkupBuilder(
-                                    "Перейти в репозиторий \uD83D\uDE80", repository.getHtmlUrl().toString());
-                            telegramBot.sendMessageInlineMarkupAndDelete(userId, "⭐ " + messages.getString("like")
-                                    + "\n" + messages.getString("like_message") + repository.getName(), markup, configuration.getExpirationTime());
+                                    messages.getString("go_to_repo"), repository.getHtmlUrl().toString());
+                            telegramBot.sendMessageInlineMarkupAndDelete(userId,messages.getString("like")
+                                    + messages.getString("like_message") + repository.getName(), markup, configuration.getExpirationTime());
                         });
                         stars.b.forEach(repository -> {
                             InlineKeyboardMarkup markup = telegramBot.urlIneKeyBoardMarkupBuilder(
-                                    "Перейти в репозиторий \uD83D\uDE80", repository.getHtmlUrl().toString());
-                            telegramBot.sendMessageInlineMarkupAndDelete(userId, "\uD83D\uDE31 " + messages.getString("dislike") +
-                                    "\n" + messages.getString("dislike_message") + repository.getName(), markup, configuration.getExpirationTime());
+                                    messages.getString("go_to_repo"), repository.getHtmlUrl().toString());
+                            telegramBot.sendMessageInlineMarkupAndDelete(userId,messages.getString("dislike") +
+                                    messages.getString("dislike_message") + repository.getName(), markup, configuration.getExpirationTime());
                         });
                     }
                 }catch (RuntimeException | IOException ex) {
-                    telegramBot.sendMessage(userId, "Произошла ошибка, поробуйте снова через  или свяжитесь с @Nikidzawa");
+                    telegramBot.sendMessage(userId, messages.getString("ex"));
                     throw new RuntimeException(ex);
                 }
             }

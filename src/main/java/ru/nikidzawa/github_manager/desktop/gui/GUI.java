@@ -31,9 +31,6 @@ public class GUI {
         } catch (AWTException e) {
             throw new RuntimeException(e);
         }
-
-
-
     }
     public void setMenu (String login, List<RepositoryDescription> repository, Configuration configuration) {
         this.configuration = configuration;
